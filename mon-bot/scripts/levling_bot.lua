@@ -34,11 +34,6 @@ function get_position()
     }
 end
 
--- Route values are tile coordinates, so no conversion is needed.
-function tile_to_pixel(tile)
-    return tile
-end
-
 -- Press one direction key for one frame (or two frames if needed).
 function apply_input(direction)
     if emu and emu.setKeys then
