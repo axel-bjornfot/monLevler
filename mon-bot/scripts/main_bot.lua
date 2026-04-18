@@ -9,6 +9,13 @@ local recoveryMode = false
 local recoveryDelay = 0
 local routeActiveFrames = 0
 local lastPos = { x = nil, y = nil }
+local nurseStarted = false
+local returningToNurse = false
+local returningToFarm = false
+local dialog_baseline = 57  -- From your initial mem_save
+local frame_counter = 0
+local buttonReleaseDelay = 0
+
 
 -- ─── RAM ADDRESSES ──────────────────────────────────────────────────────────
 local X_ADDR = 0x02037360
@@ -21,6 +28,9 @@ local PLAYER_HP_CURRENT = 0x020240AC
 local PLAYER_HP_MAX = 0x020240B0
 local ENEMY_HP_CURRENT = 0x02024104
 local ENEMY_HP_MAX = 0x02024108
+
+-- Nure pokecenter
+local NURSE_ACTIVE_ADDR = 0x020375F2
 
 -- Player moves and PP
 local PP_MOVE1 = 0x020240A8
@@ -43,9 +53,11 @@ local FAINT_CURSOR_POS = 0x02024A82
 local FAINT_CURSOR_POS_OPTION = 0x02024332
 
 -- Party HP structure
-local PARTY_BASE = 0x02024290
+local PARTY_BASE = 0x020244EC
 local POKEMON_STRUCT_SIZE = 0x64
-local HP_CURRENT_OFFSET = 0x58
+local HP_CURRENT_OFFSET = 0x56
+local HP_MAX_OFFSET = 0x58
+local LEVEL_OFFSET = 0x54
 
 -- Player and enemy battle mons
 local PLAYER_STRUCT = 0x02024084
@@ -65,10 +77,15 @@ local PLAYER_MOVE_ADDRS = {
 }
 local PP_ADDRS = { PP_MOVE1, PP_MOVE2, PP_MOVE3, PP_MOVE4 }
 
+-- phonecall counter 
+local dialog_addr = 0x02024AA6
+
 -- ─── CONSTANTS ──────────────────────────────────────────────────────────────
 local STUCK_THRESHOLD = 90
 local RECOVERY_DELAY_FRAMES = 60
 local VICTORY_ROAD_MAP = 70
+local EVER_GARDE_MAP = 15
+local HP_THRESHOLD = 4 -- 1.5 real value 3 is debug value
 
 local DIRECTIONS = {
     Up    = { dx =  0, dy = -1, key = "Up",    bit = 64 },
@@ -78,8 +95,8 @@ local DIRECTIONS = {
 }
 
 local BUTTONS = {
-    A = { key = "A", bit = 1 },
-    B = { key = "B", bit = 2 },
+    A = { name = "A", key = "A", bit = 1 },
+    B = { name = "B", key = "B", bit = 2 },
 }
 
 local TYPE_NAMES = {
@@ -139,12 +156,13 @@ local moveData = {
 local route = {
     {x=10, y=11}, {x=10, y=12}, {x=10, y=13}, {x=10, y=14}, {x=10, y=15},
     {x=11, y=15}, {x=12, y=15}, {x=13, y=15}, {x=14, y=15}, {x=15, y=15}, {x=16, y=15},
-    {x=16, y=16}, {x=16, y=17}, {x=16, y=18}, {x=16, y=19}, {x=16, y=20}, {x=16, y=21}, {x=16, y=22}, {x=16, y=23}, {x=16, y=24},
-    {x=17, y=24}, {x=18, y=24}, {x=19, y=24}, {x=20, y=24}, {x=21, y=24}, {x=22, y=24}, {x=23, y=24}, {x=24, y=24}, {x=25, y=12}, {x=25, y=13}, {x=25, y=14}, {x=25, y=15}, {x=25, y=16}, {x=25, y=17}, {x=25, y=18}, {x=25, y=19}, {x=25, y=20}, {x=25, y=21}, {x=25, y=22}, {x=25, y=23}, {x=25, y=24},
+    {x=16, y=16}, {x=16, y=17}, {x=16, y=18},
+    {x=25, y=12}, {x=25, y=13}, {x=25, y=14}, {x=25, y=15}, {x=25, y=16}, {x=25, y=17}, {x=25, y=18}, {x=25, y=19}, {x=25, y=20}, {x=25, y=21}, {x=25, y=22}, {x=25, y=23}, {x=25, y=24},
     {x=26, y=24}, {x=27, y=24}, {x=28, y=24}, {x=29, y=24}, {x=30, y=24}, {x=31, y=24}, {x=32, y=24},
     {x=32, y=25}, {x=32, y=26}, {x=32, y=27}, {x=32, y=28}, {x=32, y=29}, {x=32, y=30}, {x=32, y=31}, {x=32, y=32}, {x=32, y=33}, {x=32, y=34}, {x=32, y=35},
     {x=31, y=35}, {x=30, y=35}, {x=29, y=35}, {x=28, y=35}, {x=27, y=35}, {x=26, y=35}, {x=25, y=35},
-    {x=25, y=34}, {x=46, y=12},
+    {x=25, y=34},
+    {x=46, y=12},{x=45, y=12},{x=44, y=12},{x=43, y=12},{x=43, y=12},{x=42, y=12},{x=41, y=12},{x=40, y=12},{x=39, y=12},{x=38, y=12},{x=37, y=12},
 }
 
 local farming_route = {
@@ -189,17 +207,16 @@ function positions_equal(a, b)
     return a and b and a.x == b.x and a.y == b.y
 end
 
-function apply_input(direction)
-    if emu and emu.setKeys then
-        emu:setKeys(direction.bit)
-    elseif input and input.set then
-        input.set({ [direction.key] = true })
-    elseif joypad and joypad.set then
-        joypad.set({ [direction.key] = true })
-    else
-        error("No input API available")
+
+function apply_input(btn)
+    if emu and emu.setKeys then emu:setKeys(btn.bit)
+    elseif input  and input.set  then input.set({ [btn.key] = true })
+    elseif joypad and joypad.set then joypad.set({ [btn.key] = true })
     end
+    buttonHoldFrames = 10 -- hold button for 5 frames
+    currentButton = btn
 end
+
 
 function clear_input()
     if emu and emu.setKeys then
@@ -271,18 +288,38 @@ function battle_flag_is_set()
 end
 
 function get_party_hp(slot)
-    local addr = PARTY_BASE + (slot * POKEMON_STRUCT_SIZE) + HP_CURRENT_OFFSET
-    if not addr or addr <= 0 then return 0 end
-    return emu:read16(addr) or 0
+    local base = PARTY_BASE + (slot * POKEMON_STRUCT_SIZE)
+    local hp = emu:read16(base + HP_CURRENT_OFFSET) or 0
+    local maxhp = emu:read16(base + HP_MAX_OFFSET) or 0
+    return {base = base, hp = hp, maxhp = maxhp}
 end
 
 function find_next_awake_slot()
-    for slot = 1, 5 do
-        if get_party_hp(slot) > 0 then
+    for slot = 0, 5 do
+        local mon = get_party_hp(slot)
+        if mon.maxhp == mon.hp then
             return slot
         end
     end
-    return 0
+    return -1
+end
+
+function get_party_hp_ratio(slot)
+    local base = PARTY_BASE + (slot * POKEMON_STRUCT_SIZE)
+    local hp = emu:read16(base + HP_CURRENT_OFFSET) or 0
+    local maxhp = emu:read16(base + HP_MAX_OFFSET) or 0
+
+    if maxhp == 0 then return 0 end
+    return hp / maxhp
+end
+
+function check_party_hp_score()
+    local ratio = 0
+    for slot = 0, 5 do
+        local slot_ratio = get_party_hp_ratio(slot)
+        ratio = ratio + slot_ratio
+    end
+    return ratio
 end
 
 -- ─── RECOVERY AND STUCK DETECTION ──────────────────────────────────────────
@@ -342,8 +379,46 @@ function recovery_tick(pos)
     end
 
     recoveryMode = true
-    log("Recovery active: spamming A")
-    apply_input(BUTTONS.A)
+    return true
+end
+-- ─── NURSE POKECENTER ───────────────────────────────────────────────────
+local function isNurseActive()
+    return emu:read8(NURSE_ACTIVE_ADDR) == 1
+end
+
+-- returns true when done
+function handle_nurse(active)
+    log("active nurse: %s nurseStarted=%s", tostring(active), tostring(nurseStarted))
+    -- log("buttonHoldFrames: %s", buttonHoldFrames)
+    if buttonHoldFrames > 0 or currentButton ~= nil then
+        return false
+    end
+
+    -- Step 1: start interaction
+    if not nurseStarted then
+        if active then
+            nurseStarted = true
+            return false
+        end
+        logNurseState()
+        log("[DEBUG] nurse apply A")
+        apply_input(BUTTONS.A)
+        return false
+    end
+
+    -- Step 2: keep advancing dialogue while active
+    if active then
+        log("[DEBUG] active nurse apply A")
+        logNurseState()
+        -- apply_input(BUTTONS.A)
+        return false
+    end
+
+    -- Step 3: press A to get passed the last dialog box
+    log("active nurse: step 3")
+    -- apply_input(BUTTONS.A)
+    nurseStarted = false
+    returningToFarm = true
     return true
 end
 
@@ -366,8 +441,24 @@ function stop_movement()
 end
 
 function set_route(route)
+    log("Setting new route with %d steps", #route)
     routeToFollow = route
     currentRouteIndex = 1
+end
+
+function find_closest_route_index(route, pos)
+    local bestIndex = 1
+    local bestDist = math.huge
+
+    for i, step in ipairs(route) do
+        local dist = math.abs(step.x - pos.x) + math.abs(step.y - pos.y)
+        if dist < bestDist then
+            bestDist = dist
+            bestIndex = i
+        end
+    end
+
+    return bestIndex
 end
 
 function follow_route()
@@ -376,6 +467,9 @@ function follow_route()
     end
 
     local pos = get_position()
+    if pos.x == 0 and pos.y == 0 then
+        return nil
+    end
 
     if movementTask then
         if pos.x == movementTask.targetX and pos.y == movementTask.targetY then
@@ -431,62 +525,69 @@ function follow_route()
     elseif dx == 0 and dy == -1 then
         start_movement("Up", step.x, step.y)
         return nil
+    elseif pos.x == 46 and pos.y == 12 then
+        start_movement("Down", step.x, step.y)
+    return nil
     else
         return false, string.format("failed at step %d (%d,%d): target_not_adjacent pos=(%d,%d) dx=%d dy=%d",
             currentRouteIndex, step.x, step.y, pos.x, pos.y, dx, dy)
     end
 end
 
-function startRoute()
-    local pos = get_position()
+-- function startRoute()
+--     local pos = get_position()
 
-    local found = false
-    local startIndex = 1
-    for i = 1, #route do
-        if route[i].x == pos.x and route[i].y == pos.y then
-            startIndex = i + 1
-            found = true
-            break
-        end
-    end
+--     local found = false
+--     local startIndex = 1
+--     for i = 1, #route do
+--         if route[i].x == pos.x and route[i].y == pos.y then
+--             startIndex = i + 1
+--             found = true
+--             break
+--         end
+--     end
 
-    if not found then
-        if route[1] and (route[1].x ~= pos.x or route[1].y ~= pos.y) then
-            log("Position (%d,%d) not in route, not starting", pos.x, pos.y)
-            return
-        end
-    end
+--     if not found then
+--         if route[1] and (route[1].x ~= pos.x or route[1].y ~= pos.y) then
+--             log("Position (%d,%d) not in route, not starting", pos.x, pos.y)
+--             return
+--         end
+--     end
 
+--     runningRoute = true
+--     stop = false
+--     stuckCounter = 0
+--     recoveryMode = false
+--     recoveryDelay = 0
+--     routeActiveFrames = 0
+--     stop_movement()
+--     set_route(route)
+--     currentRouteIndex = startIndex
+--     local first = { x = 0, y = 0 }
+--     if routeToFollow and routeToFollow[currentRouteIndex] then
+--         first = routeToFollow[currentRouteIndex]
+--     end
+--     log("Route started: current=(%d,%d) startIndex=%d startStep=(%d,%d)", pos.x, pos.y, currentRouteIndex, first.x, first.y)
+-- end
+
+function goBack(back)
     runningRoute = true
     stop = false
     stuckCounter = 0
     recoveryMode = false
     recoveryDelay = 0
     routeActiveFrames = 0
-    stop_movement()
-    set_route(route)
-    currentRouteIndex = startIndex
-    local first = { x = 0, y = 0 }
-    if routeToFollow and routeToFollow[currentRouteIndex] then
-        first = routeToFollow[currentRouteIndex]
+    local real_route
+    if back then
+        real_route = reverse_route(route)
+    else
+        real_route = route
     end
-    log("Route started: current=(%d,%d) startIndex=%d startStep=(%d,%d)", pos.x, pos.y, currentRouteIndex, first.x, first.y)
-end
-
-function goBack()
-    runningRoute = true
-    stop = false
-    stuckCounter = 0
-    recoveryMode = false
-    recoveryDelay = 0
-    routeActiveFrames = 0
     stop_movement()
-    set_route(reverse_route(route))
     local pos = get_position()
-    local first = { x = 0, y = 0 }
-    if routeToFollow and routeToFollow[currentRouteIndex] then
-        first = routeToFollow[currentRouteIndex]
-    end
+    set_route(real_route)
+    currentRouteIndex = find_closest_route_index(routeToFollow, pos)
+    local first = routeToFollow[currentRouteIndex]
     log("Go back started: current=(%d,%d) startIndex=%d startStep=(%d,%d)", pos.x, pos.y, currentRouteIndex, first.x, first.y)
 end
 
@@ -792,14 +893,23 @@ function handle_battle()
     end
 end
 
+-- ── pokemon center routes ───────────────────────────────────────────────────
+-- 1st check hp of team decide when to go back
+-- 2st go all the way back to center, stand infront of the nurse
+-- 3st talk and finish the the whole dialogue, repeat press A until pokemons health is 100%
+-- 4st turn around and go back to the farming route
+
+
+
 -- ─── FARMING ROUTES ─────────────────────────────────────────────────────────
 
 function start_farming(direction)
     local r = direction == 1 and farming_route or reverse_route(farming_route)
+    --local r = direction == 1 and route or reverse_route(route)
     local pos = get_position()
     local startIndex = 1
     local found = false
-    for i = 1, #r do
+        for i = 1, #r do
         if r[i].x == pos.x and r[i].y == pos.y then
             startIndex = i + 1; found = true; break
         end
@@ -822,12 +932,21 @@ end
 
 function checkMap()
     if stop then return end
+    local active = isNurseActive()
     frame = frame + 1
     battleFrameCounter = battleFrameCounter + 1
-
     local map = emu:read16(MAP_ADDR)
     local pos = get_position()
+    local party_hp_score = check_party_hp_score()
+    frame_counter = frame_counter + 1
 
+    if buttonReleaseDelay > 0 then
+        log("button relase delay")
+        buttonReleaseDelay = buttonReleaseDelay - 1
+        return  -- skip everything until delay is done
+    end
+
+    
     if buttonHoldFrames > 0 then
         buttonHoldFrames = buttonHoldFrames - 1
         if currentButton and emu and emu.setKeys then emu:setKeys(currentButton.bit)
@@ -841,20 +960,30 @@ function checkMap()
         elseif joypad and joypad.set then joypad.set({ [currentButton.key] = false })
         end
         currentButton = nil
+        buttonReleaseDelay = 5  
     end
-
+        --log("pos=(" .. pos.x .. "," .. pos.y .. ") map: " .. map .. ")")
+    if map == EVER_GARDE_MAP and pos.x == 10 and pos.y == 11 then
+        local done = handle_nurse(active)
+        if done then
+            if not returningToFarm then
+                log("Nurse done, going back to farm")
+                returningToFarm = true
+                goBack(false)
+            end
+        end
+    end
     if map ~= VICTORY_ROAD_MAP then
         if inBattle then
             inBattle = false; fainting = false
-            log("Left VR mid-battle, resetting state")
+            --log("Left VR mid-battle, resetting state")
         end
     end
 
-    if map == VICTORY_ROAD_MAP and not runningRoute and not inBattle then
+    if map == VICTORY_ROAD_MAP and not runningRoute and not inBattle and party_hp_score > HP_THRESHOLD then
+        log("[DEBUG] is this tho %d:%d:",  party_hp_score, party_hp_score)
         start_farming(1)
     end
-
-    if not runningRoute or map ~= VICTORY_ROAD_MAP then return end
 
     if battle_flag_is_set() and not inBattle then
         inBattle = true
@@ -894,20 +1023,90 @@ function checkMap()
     if recovery_tick(pos) then
         return
     end
+    -- if party_hp_score < HP_THRESHOLD then
+    --     log("[DEBUG]: hp is bad ")
+    -- end
+
+    --  if not inBattle then
+    --     log("[DEBUG]: not in battle")
+    -- end
+
+    --  if not returningToNurse then
+    --     log("[DEBUG]: not returning to nurse ")
+    -- end
+
+    if party_hp_score < HP_THRESHOLD and not inBattle and not returningToNurse then
+        log("Party HP low (score=%.2f), returning to nurse", party_hp_score)
+        returningToNurse = true
+        goBack(true)
+        return
+    end
 
     local ok, err = follow_route()
     if ok == true then
-        local next = routeDirection == 1 and -1 or 1
-        log("Leg done, reversing")
-        start_farming(next)
+        runningRoute = false
+        if map == VICTORY_ROAD_MAP and party_hp_score > HP_THRESHOLD then
+            local next = routeDirection == 1 and -1 or 1
+            log("Arrived at farming area")
+            start_farming(next)
+            return
+        end
     elseif ok == false then
         runningRoute = false
         log("Route error: %s", err)
     end
 
-    if frame % 60 == 0 then
+    if frame_counter >= 200 then
+        frame_counter = 0
         log("Map: %d | X: %d | Y: %d", map, pos.x, pos.y)
+        if not inBattle then  -- your existing battle check
+            local current_val = emu:read8(dialog_addr) 
+        
+            if current_val ~= dialog_baseline then
+                -- We're in dialog ( phone call )
+                while emu:read8(dialog_addr) ~= dialog_baseline do
+                    apply_input(BUTTONS.A)
+                end
+            end
+        end
     end
+end
+
+
+---DEBUGGING COMMANDS should not be in this file
+function logNurseDebug()
+    print(string.format(
+        "active:%d text:%d stage:%d",
+        emu:read8(0x020375F2),
+        emu:read8(0x020206A6),
+        emu:read16(0x02024A92)
+    ))
+end
+
+function debug_party()
+    for slot = 0, 5 do
+        local base = PARTY_BASE + (slot * POKEMON_STRUCT_SIZE)
+        local level = emu:read8(base + LEVEL_OFFSET) or 0
+        local hp = emu:read16(base + HP_CURRENT_OFFSET) or 0
+        local maxhp = emu:read16(base + HP_MAX_OFFSET) or 0
+        log("slot %d base=0x%X level=%d hp=%d/%d", slot, base, level, hp, maxhp)
+    end
+end
+
+function debug_next_awake_slot()
+        local targetPartySlot = find_next_awake_slot()
+        log("[FAINT_PARTY] Found target slot: %d", targetPartySlot)
+end
+
+function logNurseState()
+    log("206A6:%d | 21718:%d | 24A8E:%d | 24A92:%d | 375F0:%d | 375F2:%d",
+        emu:read8(0x020206A6),
+        emu:read16(0x02021718),
+        emu:read16(0x02024A8E),
+        emu:read16(0x02024A92),
+        emu:read8(0x020375F0),
+        emu:read8(0x020375F2)
+    )
 end
 
 callbacks:add("frame", checkMap)
