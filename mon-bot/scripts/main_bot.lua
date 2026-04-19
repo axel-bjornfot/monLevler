@@ -13,8 +13,9 @@ local nurseStarted = false
 local returningToNurse = false
 local returningToFarm = false
 local dialog_baseline = 57  -- From your initial mem_save
-local frame_counter = 0
 local buttonReleaseDelay = 0
+local party_hp_score = 0
+local faint_state = nil
 
 
 -- ─── RAM ADDRESSES ──────────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ local STUCK_THRESHOLD = 90
 local RECOVERY_DELAY_FRAMES = 60
 local VICTORY_ROAD_MAP = 70
 local EVER_GARDE_MAP = 15
-local HP_THRESHOLD = 4 -- 1.5 real value 3 is debug value
+local HP_THRESHOLD = 2 -- 1.5 real value 3 is debug value
 
 local DIRECTIONS = {
     Up    = { dx =  0, dy = -1, key = "Up",    bit = 64 },
@@ -127,29 +128,38 @@ local TYPE_EFFECTIVENESS = {
 }
 
 local moveData = {
+    [19]  = { type = 2,  damage = true },
+    [58]  = { type = 15, damage = true },
+    [55]  = { type = 11, damage = true },   -- Water Gun
+    [61]  = { type = 11, damage = true },   -- Bubble Beam
     [73]  = { type = 12, damage = false },
     [78]  = { type = 12, damage = false },
-    [202] = { type = 12, damage = true },
-    [300] = { type = 1,  damage = true },
-    [157] = { type = 5,  damage = true },
-    [231] = { type = 8,  damage = true },
-    [156] = { type = 0,  damage = false },
-    [103] = { type = 0,  damage = false },
-    [19]  = { type = 2,  damage = true },
-    [346] = { type = 16, damage = true },
-    [337] = { type = 16, damage = true },
-    [349] = { type = 16, damage = false },
-    [242] = { type = 17, damage = true },
-    [58]  = { type = 15, damage = true },
-    [127] = { type = 11, damage = true },
-    [97]  = { type = 0,  damage = false },
-    [94]  = { type = 14, damage = true },
-    [326] = { type = 14, damage = true },
-    [347] = { type = 14, damage = false },
-    [104] = { type = 0,  damage = false },
     [85]  = { type = 13, damage = true },
-    [209] = { type = 13, damage = true },
     [86]  = { type = 13, damage = false },
+    [94]  = { type = 14, damage = true },
+    [97]  = { type = 0,  damage = false },
+    [103] = { type = 0,  damage = false },
+    [104] = { type = 0,  damage = false },
+    [125] = { type = 4,  damage = true },   -- Mud Bomb
+    [127] = { type = 11, damage = true },
+    [156] = { type = 0,  damage = false },
+    [157] = { type = 5,  damage = true },
+    [188] = { type = 3,  damage = true },   -- Sludge Bomb
+    [202] = { type = 12, damage = true },
+    [209] = { type = 13, damage = true },
+    [212] = { type = 0,  damage = false },  -- Mean Look
+    [231] = { type = 8,  damage = true },
+    [242] = { type = 17, damage = true },
+    [254] = { type = 0,  damage = false },  -- Stockpile
+    [255] = { type = 0,  damage = true },   -- Spit Up
+    [256] = { type = 0,  damage = false },  -- Swallow
+    [283] = { type = 0,  damage = false },  -- Endeavor
+    [300] = { type = 1,  damage = true },
+    [326] = { type = 14, damage = true },
+    [337] = { type = 16, damage = true },
+    [346] = { type = 16, damage = true },
+    [347] = { type = 14, damage = false },
+    [349] = { type = 16, damage = false },
 }
 
 -- Routes for farming
@@ -213,7 +223,7 @@ function apply_input(btn)
     elseif input  and input.set  then input.set({ [btn.key] = true })
     elseif joypad and joypad.set then joypad.set({ [btn.key] = true })
     end
-    buttonHoldFrames = 10 -- hold button for 5 frames
+    buttonHoldFrames = 5 -- hold button for 5 frames
     currentButton = btn
 end
 
@@ -388,38 +398,29 @@ end
 
 -- returns true when done
 function handle_nurse(active)
-    log("active nurse: %s nurseStarted=%s", tostring(active), tostring(nurseStarted))
-    -- log("buttonHoldFrames: %s", buttonHoldFrames)
     if buttonHoldFrames > 0 or currentButton ~= nil then
         return false
     end
 
+    if not active and party_hp_score > HP_THRESHOLD then
+        nurseStarted = false
+        return true
+    end
     -- Step 1: start interaction
     if not nurseStarted then
         if active then
             nurseStarted = true
             return false
         end
-        logNurseState()
-        log("[DEBUG] nurse apply A")
         apply_input(BUTTONS.A)
         return false
     end
 
     -- Step 2: keep advancing dialogue while active
     if active then
-        log("[DEBUG] active nurse apply A")
-        logNurseState()
-        -- apply_input(BUTTONS.A)
+        apply_input(BUTTONS.A)
         return false
     end
-
-    -- Step 3: press A to get passed the last dialog box
-    log("active nurse: step 3")
-    -- apply_input(BUTTONS.A)
-    nurseStarted = false
-    returningToFarm = true
-    return true
 end
 
 -- ─── MOVEMENT AND ROUTING ───────────────────────────────────────────────────
@@ -525,6 +526,12 @@ function follow_route()
     elseif dx == 0 and dy == -1 then
         start_movement("Up", step.x, step.y)
         return nil
+    elseif pos.x == 25 and pos.y == 12 then
+        start_movement("Up", step.x, step.y)
+        return nil
+        elseif pos.x == 16 and pos.y == 18 then
+        start_movement("Down", step.x, step.y)
+        return nil
     elseif pos.x == 46 and pos.y == 12 then
         start_movement("Down", step.x, step.y)
     return nil
@@ -609,14 +616,8 @@ end
 -- ─── BATTLE FUNCTIONS ───────────────────────────────────────────────────────
 
 function every_n_frames(n)
-    battleFrameCounter = battleFrameCounter + 1
-    if battleFrameCounter >= n then
-        battleFrameCounter = 0
-        return true
-    end
-    return false
+    return frame % n == 0  -- clean, no increment
 end
-
 function control_cursors()
     local top_cursor = emu:read8(TOP_MENU_CURSOR)
     local move_cursor = emu:read8(MOVE_MENU_CURSOR)
@@ -631,49 +632,34 @@ function detect_faint_menu_state()
     local cursor_state = emu:read16(FAINT_CURSOR_POS_OPTION)
     local party_active = emu:read8(PARTY_MENU_ACTIVE)
 
-    log("[FAINT] prompt_active=%d, cursor_state=%d", prompt_active, cursor_state)
+    log("[FAINT] prompt_active=%d, cursor_state=%d, party_active=%d", prompt_active, cursor_state, party_active)
 
     if prompt_active ~= 1 then
         return "not_fainted"
     end
 
-    if cursor_state == 1 then
+    if cursor_state == 1 and party_active == 1 then
         return "faint_menu_yes"
-    elseif cursor_state == 257 then
+    elseif cursor_state == 0 or cursor_state == 257 then
         return "faint_menu_no"
     else
-        log("UNKNOWN cursor_state=%d", cursor_state)
         return "unknown"
     end
 end
 
 function detect_post_faint_menu_state()
     local party_active = emu:read8(PARTY_MENU_ACTIVE)
-    local menu_state = emu:read16(MENU_STATE_SECONDARY)
+    local menu_state_sec = emu:read16(MENU_STATE_SECONDARY)
 
-    log("[POST_FAINT] party_active=%d, menu_state=%d", party_active, menu_state)
+    log("[POST_FAINT] party_active=%d, menu_state=%d", party_active, menu_state_sec)
 
-    if menu_state == 257 or party_active == 1 then
+    if menu_state_sec == 257 or party_active == 1 then
         return "party_list"
-    elseif menu_state == 1 then
+    elseif menu_state_sec == 1 then
         return "yes_no_prompt"
     else
         return "unknown"
     end
-end
-
-function detect_battle_menu_state()
-    local menu_state = emu:read8(MENU_STATE_ADDR)
-    local top_cursor = emu:read8(TOP_MENU_CURSOR)
-    local move_cursor = emu:read8(MOVE_MENU_CURSOR)
-    local party_cursor = emu:read8(PARTY_MENU_CURSOR)
-
-    log("═══ MENU STATE SNAPSHOT ═══")
-    log("0x020207EE (MENU_STATE): %d", menu_state)
-    log("0x020244AC (TOP_CURSOR):    %d", top_cursor)
-    log("0x020244B0 (MOVE_CURSOR):   %d", move_cursor)
-    log("0x0203CED1 (PARTY_CURSOR):  %d", party_cursor)
-    log("═══════════════════════════")
 end
 
 function score_move(move_id, enemy_type1, enemy_type2)
@@ -701,7 +687,6 @@ function best_move_slot()
     for i = 1, 4 do
         local pp = emu:read8(PP_ADDRS[i])
         if pp == 0 then
-            log("  Move %d: PP=0 (skip)", i - 1)
         else
             local move_id = emu:read16(PLAYER_MOVE_ADDRS[i])
             local score = score_move(move_id, enemy_type1, enemy_type2)
@@ -713,7 +698,6 @@ function best_move_slot()
     end
 
     if best_slot >= 0 then
-        log("Best move: slot %d (score=%d)", best_slot, best_score)
         return best_slot
     end
 
@@ -723,8 +707,6 @@ end
 
 function move_cursor_step(target)
     local cur = emu:read8(MOVE_MENU_CURSOR)
-
-    log("Move menu cursor: %d (need %d)", cur, target)
 
     if cur == target then return true end
     if cur % 2 ~= target % 2 then
@@ -738,16 +720,17 @@ end
 function party_cursor_step(target)
     local cur = emu:read8(PARTY_MENU_CURSOR)
     if cur == target then return true end
-    if cur % 2 ~= target % 2 then
-        apply_input(target % 2 > cur % 2 and DIRECTIONS.Right or DIRECTIONS.Left)
+    if target > cur then
+        apply_input(DIRECTIONS.Down)
     else
-        apply_input(math.floor(target/2) > math.floor(cur/2) and DIRECTIONS.Down or DIRECTIONS.Up)
+        apply_input(DIRECTIONS.Up)
     end
     return false
 end
 
 function handle_fainted()
-    local faint_state = detect_faint_menu_state()
+    local faint_state_menu = detect_faint_menu_state()
+    local post_faint_state = detect_post_faint_menu_state()
 
     if fightPhase == "faint_message" then
         log("[FAINT] Dismissing faint message, pressing A")
@@ -755,23 +738,24 @@ function handle_fainted()
         return
     end
 
-    if faint_state == "not_fainted" then
+    
+    if faint_state_menu == "not_fainted" then
         log("[FAINT] Prompt no longer active, exiting faint handling")
         fightPhase = "top"
         return
     end
 
-    if faint_state == "faint_menu_no" then
+    if faint_state_menu == "faint_menu_no" then
         apply_input(DIRECTIONS.Up)
         return
-    elseif faint_state == "faint_menu_yes" then
+    elseif faint_state_menu == "faint_menu_yes" and faint_state == nil then
         apply_input(BUTTONS.A)
         faint_state = "faint_party"
         targetPartySlot = 0
         log("[FAINT] Pressed A on YES, moving to FAINT_PARTY phase")
         return
     elseif faint_state == "faint_party" then
-        local post_faint_state = detect_post_faint_menu_state()
+        
         log("[FAINT] Post-faint menu state: %s", post_faint_state)
 
         if post_faint_state == "yes_no_prompt" then
@@ -792,6 +776,7 @@ function handle_fainted()
                 apply_input(BUTTONS.A)
                 fightPhase = "top"
                 log("[FAINT_PARTY] Pokémon %d sent out, returning to TOP phase", targetPartySlot)
+                faint_state = nil
             end
         end
     end
@@ -825,7 +810,7 @@ function handle_fighting()
             log("[STARTUP STEP 2] Transitioning to TOP phase")
             fightPhase = "top"
             startupStep = 0
-            detect_battle_menu_state()
+            
             return
         end
     end
@@ -841,7 +826,7 @@ function handle_fighting()
             log("[TOP MENU] Selected move slot %d with PP=%d, transitioning to MOVE phase", targetMove, pp)
 
             fightPhase = "move"
-            detect_battle_menu_state()
+            
             return
         else
             log("[TOP MENU] Cursor at %d, target is %d - navigating", top_cursor, targetTopMenu)
@@ -855,7 +840,7 @@ function handle_fighting()
     end
 
     if menu_state == 1 then
-        detect_battle_menu_state()
+        
 
         log("[MOVE PHASE] Navigating to move slot %d", targetMove)
         local on_target = move_cursor_step(targetMove)
@@ -875,16 +860,14 @@ end
 
 function handle_battle()
     local cur_hp = get_player_hp()
-    local faint_state = detect_faint_menu_state()
+    local faint_menu_state = detect_faint_menu_state()
 
     if cur_hp == 0 then
         fainting = true
-        if faint_state ~= "not_fainted" then
-            fightPhase = faint_state
+        if faint_menu_state ~= "not_fainted" then
+            fightPhase = faint_menu_state
         else
-            if fightPhase ~= "faint_message" then
-                fightPhase = "faint_message"
-            end
+            fightPhase = "faint_message"
         end
         handle_fainted()
     else
@@ -932,16 +915,11 @@ end
 
 function checkMap()
     if stop then return end
-    local active = isNurseActive()
     frame = frame + 1
-    battleFrameCounter = battleFrameCounter + 1
     local map = emu:read16(MAP_ADDR)
     local pos = get_position()
-    local party_hp_score = check_party_hp_score()
-    frame_counter = frame_counter + 1
 
     if buttonReleaseDelay > 0 then
-        log("button relase delay")
         buttonReleaseDelay = buttonReleaseDelay - 1
         return  -- skip everything until delay is done
     end
@@ -960,46 +938,24 @@ function checkMap()
         elseif joypad and joypad.set then joypad.set({ [currentButton.key] = false })
         end
         currentButton = nil
-        buttonReleaseDelay = 5  
+        buttonReleaseDelay = 3  
     end
         --log("pos=(" .. pos.x .. "," .. pos.y .. ") map: " .. map .. ")")
-    if map == EVER_GARDE_MAP and pos.x == 10 and pos.y == 11 then
-        local done = handle_nurse(active)
-        if done then
-            if not returningToFarm then
-                log("Nurse done, going back to farm")
-                returningToFarm = true
-                goBack(false)
-            end
-        end
-    end
-    if map ~= VICTORY_ROAD_MAP then
-        if inBattle then
-            inBattle = false; fainting = false
-            --log("Left VR mid-battle, resetting state")
-        end
-    end
 
-    if map == VICTORY_ROAD_MAP and not runningRoute and not inBattle and party_hp_score > HP_THRESHOLD then
-        log("[DEBUG] is this tho %d:%d:",  party_hp_score, party_hp_score)
-        start_farming(1)
-    end
+   
 
     if battle_flag_is_set() and not inBattle then
         inBattle = true
         fightPhase = "startup"
         startupStep = 0
-        battleFrameCounter = 0
         fainting = false
         log("Battle started (flag)")
     end
 
     if inBattle then
-        local enemy_cur, enemy_max = get_enemy_hp()
+        local enemy_cur = get_enemy_hp()
+        party_hp_score = check_party_hp_score()
 
-        if enemy_cur == enemy_max and battleFrameCounter == 0 then
-            log("Battle intro reset (enemy HP full)")
-        end
 
         if not battle_flag_is_set() then
             if fainting then
@@ -1009,8 +965,13 @@ function checkMap()
             if enemy_cur == 0 then
                 inBattle = false
                 log("Battle ended")
-                start_farming(routeDirection)
-                return
+                if party_hp_score <= HP_THRESHOLD then
+                    goBack(true)
+                    return
+                else
+                    start_farming(routeDirection)
+                    return
+                end
             end
             return
         end
@@ -1020,12 +981,12 @@ function checkMap()
         return
     end
 
-    if recovery_tick(pos) then
-        return
+
+    if every_n_frames(60) then
+        if recovery_tick(pos) then
+            return
+        end
     end
-    -- if party_hp_score < HP_THRESHOLD then
-    --     log("[DEBUG]: hp is bad ")
-    -- end
 
     --  if not inBattle then
     --     log("[DEBUG]: not in battle")
@@ -1035,38 +996,59 @@ function checkMap()
     --     log("[DEBUG]: not returning to nurse ")
     -- end
 
-    if party_hp_score < HP_THRESHOLD and not inBattle and not returningToNurse then
-        log("Party HP low (score=%.2f), returning to nurse", party_hp_score)
-        returningToNurse = true
-        goBack(true)
-        return
-    end
+    if every_n_frames(5) then
+        party_hp_score = check_party_hp_score()
+        local active = isNurseActive()
 
-    local ok, err = follow_route()
-    if ok == true then
-        runningRoute = false
-        if map == VICTORY_ROAD_MAP and party_hp_score > HP_THRESHOLD then
-            local next = routeDirection == 1 and -1 or 1
-            log("Arrived at farming area")
-            start_farming(next)
+        if map == EVER_GARDE_MAP and pos.x == 10 and pos.y == 11 then
+            local done = handle_nurse(active)
+            
+            if done then
+                if not returningToFarm then
+                    log("Nurse done, going back to farm")
+                    returningToFarm = true
+                    goBack(false)
+                end
+            end
+        end
+
+        if map ~= VICTORY_ROAD_MAP and not runningRoute and  party_hp_score > HP_THRESHOLD then
+            goBack(false)
+        end
+    
+        if map == VICTORY_ROAD_MAP and not runningRoute and not inBattle and party_hp_score >= HP_THRESHOLD then
+            start_farming(1)
+        end
+
+        if party_hp_score < HP_THRESHOLD and not inBattle and not returningToNurse then
+            log("Party HP low (score=%.2f), returning to nurse", party_hp_score)
+            returningToNurse = true
+            goBack(true)
             return
         end
-    elseif ok == false then
-        runningRoute = false
-        log("Route error: %s", err)
+
+        local ok, err = follow_route()
+        if ok == true then
+            runningRoute = false
+            if map == VICTORY_ROAD_MAP and party_hp_score >= HP_THRESHOLD then
+                local next = routeDirection == 1 and -1 or 1
+                log("Arrived at farming area")
+                start_farming(next)
+                return
+            end
+        elseif ok == false then
+            runningRoute = false
+            log("Route error: %s", err)
+        end
     end
 
-    if frame_counter >= 200 then
-        frame_counter = 0
-        log("Map: %d | X: %d | Y: %d", map, pos.x, pos.y)
+
+    
+    if every_n_frames(200) then
         if not inBattle then  -- your existing battle check
-            local current_val = emu:read8(dialog_addr) 
-        
-            if current_val ~= dialog_baseline then
-                -- We're in dialog ( phone call )
-                while emu:read8(dialog_addr) ~= dialog_baseline do
-                    apply_input(BUTTONS.A)
-                end
+            local current_val = emu:read8(dialog_addr)
+            if current_val == dialog_baseline then
+                apply_input(BUTTONS.A)
             end
         end
     end
@@ -1098,15 +1080,18 @@ function debug_next_awake_slot()
         log("[FAINT_PARTY] Found target slot: %d", targetPartySlot)
 end
 
-function logNurseState()
-    log("206A6:%d | 21718:%d | 24A8E:%d | 24A92:%d | 375F0:%d | 375F2:%d",
-        emu:read8(0x020206A6),
-        emu:read16(0x02021718),
-        emu:read16(0x02024A8E),
-        emu:read16(0x02024A92),
-        emu:read8(0x020375F0),
-        emu:read8(0x020375F2)
-    )
+function detect_battle_menu_state()
+    local menu_state = emu:read8(MENU_STATE_ADDR)
+    local top_cursor = emu:read8(TOP_MENU_CURSOR)
+    local move_cursor = emu:read8(MOVE_MENU_CURSOR)
+    local party_cursor = emu:read8(PARTY_MENU_CURSOR)
+
+    log("═══ MENU STATE SNAPSHOT ═══")
+    log("0x020207EE (MENU_STATE): %d", menu_state)
+    log("0x020244AC (TOP_CURSOR):    %d", top_cursor)
+    log("0x020244B0 (MOVE_CURSOR):   %d", move_cursor)
+    log("0x0203CED1 (PARTY_CURSOR):  %d", party_cursor)
+    log("═══════════════════════════")
 end
 
 callbacks:add("frame", checkMap)
