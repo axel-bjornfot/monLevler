@@ -13,7 +13,6 @@ local nurseStarted = false
 local returningToNurse = false
 local returningToFarm = false
 local dialog_baseline = 57  -- From your initial mem_save
-local frame_counter = 0
 local buttonReleaseDelay = 0
 
 
@@ -182,7 +181,6 @@ local targetPartySlot = 0
 local startupStep = 0
 local buttonHoldFrames = 0
 local currentButton = nil
-local battleFrameCounter = 0
 local routeDirection = 1
 
 -- ─── UTILITY FUNCTIONS ──────────────────────────────────────────────────────
@@ -389,10 +387,6 @@ end
 -- returns true when done
 function handle_nurse(active)
     log("active nurse: %s nurseStarted=%s", tostring(active), tostring(nurseStarted))
-    -- log("buttonHoldFrames: %s", buttonHoldFrames)
-    if buttonHoldFrames > 0 or currentButton ~= nil then
-        return false
-    end
 
     -- Step 1: start interaction
     if not nurseStarted then
@@ -400,7 +394,6 @@ function handle_nurse(active)
             nurseStarted = true
             return false
         end
-        logNurseState()
         log("[DEBUG] nurse apply A")
         apply_input(BUTTONS.A)
         return false
@@ -409,14 +402,13 @@ function handle_nurse(active)
     -- Step 2: keep advancing dialogue while active
     if active then
         log("[DEBUG] active nurse apply A")
-        logNurseState()
-        -- apply_input(BUTTONS.A)
+        apply_input(BUTTONS.A)
         return false
     end
 
     -- Step 3: press A to get passed the last dialog box
     log("active nurse: step 3")
-    -- apply_input(BUTTONS.A)
+    apply_input(BUTTONS.A)
     nurseStarted = false
     returningToFarm = true
     return true
@@ -483,7 +475,7 @@ function follow_route()
             stop_movement()
             inBattle = true
             local cur_hp = get_player_hp()
-            if cur_hp == 0 and not battle_flag_is_set() and battleFrameCounter < 1 then
+            if cur_hp == 0 and not battle_flag_is_set() then
                 log("Faint prompt detected at (%d,%d)", pos.x, pos.y)
             else
                 log("Battle detected at (%d,%d)", pos.x, pos.y)
@@ -609,12 +601,7 @@ end
 -- ─── BATTLE FUNCTIONS ───────────────────────────────────────────────────────
 
 function every_n_frames(n)
-    battleFrameCounter = battleFrameCounter + 1
-    if battleFrameCounter >= n then
-        battleFrameCounter = 0
-        return true
-    end
-    return false
+    return frame % n == 0  -- clean, no increment
 end
 
 function control_cursors()
@@ -934,11 +921,8 @@ function checkMap()
     if stop then return end
     local active = isNurseActive()
     frame = frame + 1
-    battleFrameCounter = battleFrameCounter + 1
     local map = emu:read16(MAP_ADDR)
     local pos = get_position()
-    local party_hp_score = check_party_hp_score()
-    frame_counter = frame_counter + 1
 
     if buttonReleaseDelay > 0 then
         log("button relase delay")
@@ -963,33 +947,13 @@ function checkMap()
         buttonReleaseDelay = 5  
     end
         --log("pos=(" .. pos.x .. "," .. pos.y .. ") map: " .. map .. ")")
-    if map == EVER_GARDE_MAP and pos.x == 10 and pos.y == 11 then
-        local done = handle_nurse(active)
-        if done then
-            if not returningToFarm then
-                log("Nurse done, going back to farm")
-                returningToFarm = true
-                goBack(false)
-            end
-        end
-    end
-    if map ~= VICTORY_ROAD_MAP then
-        if inBattle then
-            inBattle = false; fainting = false
-            --log("Left VR mid-battle, resetting state")
-        end
-    end
 
-    if map == VICTORY_ROAD_MAP and not runningRoute and not inBattle and party_hp_score > HP_THRESHOLD then
-        log("[DEBUG] is this tho %d:%d:",  party_hp_score, party_hp_score)
-        start_farming(1)
-    end
+   
 
     if battle_flag_is_set() and not inBattle then
         inBattle = true
         fightPhase = "startup"
         startupStep = 0
-        battleFrameCounter = 0
         fainting = false
         log("Battle started (flag)")
     end
@@ -997,7 +961,7 @@ function checkMap()
     if inBattle then
         local enemy_cur, enemy_max = get_enemy_hp()
 
-        if enemy_cur == enemy_max and battleFrameCounter == 0 then
+        if enemy_cur == enemy_max and every_n_frames(30) then
             log("Battle intro reset (enemy HP full)")
         end
 
@@ -1023,9 +987,6 @@ function checkMap()
     if recovery_tick(pos) then
         return
     end
-    -- if party_hp_score < HP_THRESHOLD then
-    --     log("[DEBUG]: hp is bad ")
-    -- end
 
     --  if not inBattle then
     --     log("[DEBUG]: not in battle")
@@ -1035,29 +996,57 @@ function checkMap()
     --     log("[DEBUG]: not returning to nurse ")
     -- end
 
-    if party_hp_score < HP_THRESHOLD and not inBattle and not returningToNurse then
-        log("Party HP low (score=%.2f), returning to nurse", party_hp_score)
-        returningToNurse = true
-        goBack(true)
-        return
-    end
+    if every_n_frames(50) then
+        local party_hp_score = check_party_hp_score()
 
-    local ok, err = follow_route()
-    if ok == true then
-        runningRoute = false
-        if map == VICTORY_ROAD_MAP and party_hp_score > HP_THRESHOLD then
-            local next = routeDirection == 1 and -1 or 1
-            log("Arrived at farming area")
-            start_farming(next)
+        if map == EVER_GARDE_MAP and pos.x == 10 and pos.y == 11 then
+            local done = handle_nurse(active)
+            if done then
+                if not returningToFarm then
+                    log("Nurse done, going back to farm")
+                    returningToFarm = true
+                    goBack(false)
+                end
+            end
+        end
+        if map ~= VICTORY_ROAD_MAP then
+            if inBattle then
+                inBattle = false; fainting = false
+                --log("Left VR mid-battle, resetting state")
+            end
+        end
+    
+
+        if map == VICTORY_ROAD_MAP and not runningRoute and not inBattle and party_hp_score > HP_THRESHOLD then
+            log("[DEBUG] is this tho %d:%d:",  party_hp_score, party_hp_score)
+            start_farming(1)
+        end
+
+        if party_hp_score < HP_THRESHOLD and not inBattle and not returningToNurse then
+            log("Party HP low (score=%.2f), returning to nurse", party_hp_score)
+            returningToNurse = true
+            goBack(true)
             return
         end
-    elseif ok == false then
-        runningRoute = false
-        log("Route error: %s", err)
+
+        local ok, err = follow_route()
+        if ok == true then
+            runningRoute = false
+            if map == VICTORY_ROAD_MAP and party_hp_score > HP_THRESHOLD then
+                local next = routeDirection == 1 and -1 or 1
+                log("Arrived at farming area")
+                start_farming(next)
+                return
+            end
+        elseif ok == false then
+            runningRoute = false
+            log("Route error: %s", err)
+        end
     end
 
-    if frame_counter >= 200 then
-        frame_counter = 0
+
+    
+    if every_n_frames(200) then
         log("Map: %d | X: %d | Y: %d", map, pos.x, pos.y)
         if not inBattle then  -- your existing battle check
             local current_val = emu:read8(dialog_addr) 
@@ -1074,15 +1063,6 @@ end
 
 
 ---DEBUGGING COMMANDS should not be in this file
-function logNurseDebug()
-    print(string.format(
-        "active:%d text:%d stage:%d",
-        emu:read8(0x020375F2),
-        emu:read8(0x020206A6),
-        emu:read16(0x02024A92)
-    ))
-end
-
 function debug_party()
     for slot = 0, 5 do
         local base = PARTY_BASE + (slot * POKEMON_STRUCT_SIZE)
@@ -1096,17 +1076,6 @@ end
 function debug_next_awake_slot()
         local targetPartySlot = find_next_awake_slot()
         log("[FAINT_PARTY] Found target slot: %d", targetPartySlot)
-end
-
-function logNurseState()
-    log("206A6:%d | 21718:%d | 24A8E:%d | 24A92:%d | 375F0:%d | 375F2:%d",
-        emu:read8(0x020206A6),
-        emu:read16(0x02021718),
-        emu:read16(0x02024A8E),
-        emu:read16(0x02024A92),
-        emu:read8(0x020375F0),
-        emu:read8(0x020375F2)
-    )
 end
 
 callbacks:add("frame", checkMap)
