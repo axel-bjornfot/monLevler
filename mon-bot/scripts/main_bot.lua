@@ -127,15 +127,26 @@ local TYPE_EFFECTIVENESS = {
     [17] = { [7]=2, [14]=2, [1]=0.5, [6]=0.5, [8]=1.0 },
 }
 
+local TYPE_IMMUNITY = {
+    [2] = { [4] = true },  -- Flying immune to Ground
+    [7] = { [0] = true, [1] = true },  -- Ghost immune to Normal and Fighting
+    [8] = { [3] = true },  -- Steel immune to Poison
+}
+
 local moveData = {
+    [6]   = { type = 6,  damage = true },   -- X-Scissor
+    [13]  = { type = 2,  damage = true },   -- Air Slash
     [19]  = { type = 2,  damage = true },
-    [58]  = { type = 15, damage = true },
+    [38]  = { type = 0,  damage = true },   -- Double Edge
     [55]  = { type = 11, damage = true },   -- Water Gun
+    [56]  = { type = 11, damage = true },   -- Hydro Pump
+    [58]  = { type = 15, damage = true },
     [61]  = { type = 11, damage = true },   -- Bubble Beam
     [73]  = { type = 12, damage = false },
     [78]  = { type = 12, damage = false },
     [85]  = { type = 13, damage = true },
     [86]  = { type = 13, damage = false },
+    [89]  = { type = 4,  damage = true },   -- Earthquake
     [94]  = { type = 14, damage = true },
     [97]  = { type = 0,  damage = false },
     [103] = { type = 0,  damage = false },
@@ -145,6 +156,7 @@ local moveData = {
     [156] = { type = 0,  damage = false },
     [157] = { type = 5,  damage = true },
     [188] = { type = 3,  damage = true },   -- Sludge Bomb
+    [198] = { type = 5,  damage = true },   -- Head Smash
     [202] = { type = 12, damage = true },
     [209] = { type = 13, damage = true },
     [212] = { type = 0,  damage = false },  -- Mean Look
@@ -163,6 +175,7 @@ local moveData = {
 }
 
 -- Routes for farming
+--route 1
 local route = {
     {x=10, y=11}, {x=10, y=12}, {x=10, y=13}, {x=10, y=14}, {x=10, y=15},
     {x=11, y=15}, {x=12, y=15}, {x=13, y=15}, {x=14, y=15}, {x=15, y=15}, {x=16, y=15},
@@ -174,11 +187,30 @@ local route = {
     {x=25, y=34},
     {x=46, y=12},{x=45, y=12},{x=44, y=12},{x=43, y=12},{x=43, y=12},{x=42, y=12},{x=41, y=12},{x=40, y=12},{x=39, y=12},{x=38, y=12},{x=37, y=12},
 }
-
 local farming_route = {
     {x=45, y=12},{x=44, y=12},{x=43, y=12},{x=43, y=12},{x=42, y=12},{x=41, y=12},{x=40, y=12},{x=39, y=12},{x=38, y=12},{x=37, y=12},
 }
 
+-- route 2
+local route_map4 = {
+    {x=14, y=11}, {x=14, y=14}, {x=14, y=15},
+    {x=21, y=14}, {x=21, y=15}, {x=21, y=16},
+    {x=19, y=17}, {x=15, y=17}, {x=8, y=17},
+}
+
+local route_map29 = {
+    {x=41, y=17}, {x=33, y=17}, {x=28, y=17}, {x=28, y=24}, {x=28, y=31},
+    {x=28, y=39}, {x=28, y=44}, {x=28, y=46}, {x=28, y=53}, {x=28, y=55},
+    {x=25, y=55}, {x=25, y=56}, {x=25, y=57}, {x=25, y=60},
+    {x=22, y=57}, {x=21, y=57}, {x=21, y=56}, {x=21, y=54},
+    {x=19, y=54}, {x=19, y=56}, {x=19, y=60}, {x=20, y=62},
+    {x=22, y=63}, {x=22, y=67}, {x=26, y=67}, {x=30, y=67},
+    {x=33, y=67}, {x=33, y=63}, {x=35, y=63}, {x=35, y=66},
+    {x=35, y=70}, {x=35, y=74}, {x=35, y=78}, {x=35, y=80},
+    {x=31, y=80}, {x=31, y=77}, {x=31, y=73}, {x=31, y=72},
+    {x=28, y=72}, {x=24, y=72}, {x=23, y=73}, {x=21, y=73},
+    {x=21, y=77}, {x=19, y=77}, {x=15, y=77}, {x=15, y=74}, {x=15, y=70},
+}
 -- ─── ROUTING STATE ──────────────────────────────────────────────────────────
 local currentRouteIndex = 1
 local routeToFollow = nil
@@ -669,8 +701,16 @@ function score_move(move_id, enemy_type1, enemy_type2)
     if not move_info.damage then return 0 end
 
     local move_type = move_info.type
-    local eff = TYPE_EFFECTIVENESS[move_type] or {}
 
+    -- Check immunity (move won't hit at all)
+    if TYPE_IMMUNITY[enemy_type1] and TYPE_IMMUNITY[enemy_type1][move_type] then
+        return 0
+    end
+    if TYPE_IMMUNITY[enemy_type2] and TYPE_IMMUNITY[enemy_type2][move_type] then
+        return 0
+    end
+
+    local eff = TYPE_EFFECTIVENESS[move_type] or {}
     local eff1 = eff[enemy_type1] or 1.0
     local eff2 = eff[enemy_type2] or 1.0
 
@@ -727,7 +767,7 @@ function party_cursor_step(target)
     end
     return false
 end
-
+-- TODO: Fainted ! is not working 100% of the time more lite every time 70% at the time
 function handle_fainted()
     local faint_state_menu = detect_faint_menu_state()
     local post_faint_state = detect_post_faint_menu_state()
