@@ -16,6 +16,7 @@ local dialog_baseline = 57  -- From your initial mem_save
 local buttonReleaseDelay = 0
 local party_hp_score = 0
 local faint_state = nil
+local post_faint_count = 0
 
 
 -- ─── RAM ADDRESSES ──────────────────────────────────────────────────────────
@@ -157,11 +158,14 @@ local moveData = {
     [157] = { type = 5,  damage = true },
     [188] = { type = 3,  damage = true },   -- Sludge Bomb
     [198] = { type = 5,  damage = true },   -- Head Smash
+    [200] = { type = 16, damage = true },   -- Outrage
     [202] = { type = 12, damage = true },
     [209] = { type = 13, damage = true },
     [212] = { type = 0,  damage = false },  -- Mean Look
+    [214] = { type = 0,  damage = false },  -- Sleep Talk
     [231] = { type = 8,  damage = true },
     [242] = { type = 17, damage = true },
+    [245] = { type = 0,  damage = true },   -- Extreme Speed
     [254] = { type = 0,  damage = false },  -- Stockpile
     [255] = { type = 0,  damage = true },   -- Spit Up
     [256] = { type = 0,  damage = false },  -- Swallow
@@ -192,25 +196,25 @@ local farming_route = {
 }
 
 -- route 2
-local route_map4 = {
-    {x=14, y=11}, {x=14, y=14}, {x=14, y=15},
-    {x=21, y=14}, {x=21, y=15}, {x=21, y=16},
-    {x=19, y=17}, {x=15, y=17}, {x=8, y=17},
-}
+-- local route_map4 = {
+--     {x=14, y=11}, {x=14, y=14}, {x=14, y=15},
+--     {x=21, y=14}, {x=21, y=15}, {x=21, y=16},
+--     {x=19, y=17}, {x=15, y=17}, {x=8, y=17},
+-- }
 
-local route_map29 = {
-    {x=41, y=17}, {x=33, y=17}, {x=28, y=17}, {x=28, y=24}, {x=28, y=31},
-    {x=28, y=39}, {x=28, y=44}, {x=28, y=46}, {x=28, y=53}, {x=28, y=55},
-    {x=25, y=55}, {x=25, y=56}, {x=25, y=57}, {x=25, y=60},
-    {x=22, y=57}, {x=21, y=57}, {x=21, y=56}, {x=21, y=54},
-    {x=19, y=54}, {x=19, y=56}, {x=19, y=60}, {x=20, y=62},
-    {x=22, y=63}, {x=22, y=67}, {x=26, y=67}, {x=30, y=67},
-    {x=33, y=67}, {x=33, y=63}, {x=35, y=63}, {x=35, y=66},
-    {x=35, y=70}, {x=35, y=74}, {x=35, y=78}, {x=35, y=80},
-    {x=31, y=80}, {x=31, y=77}, {x=31, y=73}, {x=31, y=72},
-    {x=28, y=72}, {x=24, y=72}, {x=23, y=73}, {x=21, y=73},
-    {x=21, y=77}, {x=19, y=77}, {x=15, y=77}, {x=15, y=74}, {x=15, y=70},
-}
+-- local route_map29 = {
+--     {x=41, y=17}, {x=33, y=17}, {x=28, y=17}, {x=28, y=24}, {x=28, y=31},
+--     {x=28, y=39}, {x=28, y=44}, {x=28, y=46}, {x=28, y=53}, {x=28, y=55},
+--     {x=25, y=55}, {x=25, y=56}, {x=25, y=57}, {x=25, y=60},
+--     {x=22, y=57}, {x=21, y=57}, {x=21, y=56}, {x=21, y=54},
+--     {x=19, y=54}, {x=19, y=56}, {x=19, y=60}, {x=20, y=62},
+--     {x=22, y=63}, {x=22, y=67}, {x=26, y=67}, {x=30, y=67},
+--     {x=33, y=67}, {x=33, y=63}, {x=35, y=63}, {x=35, y=66},
+--     {x=35, y=70}, {x=35, y=74}, {x=35, y=78}, {x=35, y=80},
+--     {x=31, y=80}, {x=31, y=77}, {x=31, y=73}, {x=31, y=72},
+--     {x=28, y=72}, {x=24, y=72}, {x=23, y=73}, {x=21, y=73},
+--     {x=21, y=77}, {x=19, y=77}, {x=15, y=77}, {x=15, y=74}, {x=15, y=70},
+-- }
 -- ─── ROUTING STATE ──────────────────────────────────────────────────────────
 local currentRouteIndex = 1
 local routeToFollow = nil
@@ -573,42 +577,6 @@ function follow_route()
     end
 end
 
--- function startRoute()
---     local pos = get_position()
-
---     local found = false
---     local startIndex = 1
---     for i = 1, #route do
---         if route[i].x == pos.x and route[i].y == pos.y then
---             startIndex = i + 1
---             found = true
---             break
---         end
---     end
-
---     if not found then
---         if route[1] and (route[1].x ~= pos.x or route[1].y ~= pos.y) then
---             log("Position (%d,%d) not in route, not starting", pos.x, pos.y)
---             return
---         end
---     end
-
---     runningRoute = true
---     stop = false
---     stuckCounter = 0
---     recoveryMode = false
---     recoveryDelay = 0
---     routeActiveFrames = 0
---     stop_movement()
---     set_route(route)
---     currentRouteIndex = startIndex
---     local first = { x = 0, y = 0 }
---     if routeToFollow and routeToFollow[currentRouteIndex] then
---         first = routeToFollow[currentRouteIndex]
---     end
---     log("Route started: current=(%d,%d) startIndex=%d startStep=(%d,%d)", pos.x, pos.y, currentRouteIndex, first.x, first.y)
--- end
-
 function goBack(back)
     runningRoute = true
     stop = false
@@ -684,6 +652,8 @@ function detect_post_faint_menu_state()
     local menu_state_sec = emu:read16(MENU_STATE_SECONDARY)
 
     log("[POST_FAINT] party_active=%d, menu_state=%d", party_active, menu_state_sec)
+    post_faint_count = post_faint_count + 1
+    log("post faint count=%d", post_faint_count)    
 
     if menu_state_sec == 257 or party_active == 1 then
         return "party_list"
@@ -817,6 +787,7 @@ function handle_fainted()
                 fightPhase = "top"
                 log("[FAINT_PARTY] Pokémon %d sent out, returning to TOP phase", targetPartySlot)
                 faint_state = nil
+                --post_faint_count = 0
             end
         end
     end
@@ -856,7 +827,7 @@ function handle_fighting()
     end
 
     if menu_state == 0 then
-        local top_cursor = emu:read8(TOP_MENU_CURSOR)
+        local top_cursor = emu:read8(TOP_MENU_CURSOR) --do we need this
 
         if top_cursor == targetTopMenu then
             log("[TOP MENU] Cursor at target (%d), pressing A", top_cursor)
@@ -963,7 +934,6 @@ function checkMap()
         buttonReleaseDelay = buttonReleaseDelay - 1
         return  -- skip everything until delay is done
     end
-
     
     if buttonHoldFrames > 0 then
         buttonHoldFrames = buttonHoldFrames - 1
@@ -982,7 +952,17 @@ function checkMap()
     end
         --log("pos=(" .. pos.x .. "," .. pos.y .. ") map: " .. map .. ")")
 
-   
+    if post_faint_count > 20 then
+        buttonHoldFrames = 0
+        buttonReleaseDelay = 0
+        if post_faint_count == 25 then
+            apply_input(BUTTONS.A)
+            post_faint_count = 0
+            return
+        end
+        post_faint_count = post_faint_count + 1
+        return
+    end
 
     if battle_flag_is_set() and not inBattle then
         inBattle = true
